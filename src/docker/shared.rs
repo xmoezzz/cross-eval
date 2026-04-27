@@ -39,6 +39,10 @@ pub const DEFAULT_IMAGE_VERSION: &str = if crate::commit_info().is_empty() {
     "main"
 };
 
+pub(crate) fn native_trace_enabled() -> bool {
+    cfg!(target_os = "linux") && env::var_os("CROSS_NATIVE_TRACE").is_some()
+}
+
 #[derive(Debug)]
 pub struct DockerOptions {
     pub engine: Engine,
@@ -1061,11 +1065,23 @@ impl DockerCommandExt for Command {
     }
 
     fn add_build_command(&mut self, dirs: &ToolchainDirectories, cmd: &SafeCommand) -> &mut Self {
-        let build_command = format!(
-            "PATH=\"$PATH\":\"{}/bin\" {:?}",
-            dirs.sysroot_mount_path(),
-            cmd
-        );
+        let build_command = if native_trace_enabled() && cmd.program() == "cargo" {
+            let mut wrapped = SafeCommand::new("cargo");
+            wrapped.args(["native-trace", "--"]);
+            wrapped.args(cmd.arg_slice());
+            format!(
+                "PATH=\"$PATH\":\"{}/bin\":\"{}/bin\" {:?}",
+                dirs.sysroot_mount_path(),
+                dirs.cargo_mount_path(),
+                wrapped
+            )
+        } else {
+            format!(
+                "PATH=\"$PATH\":\"{}/bin\" {:?}",
+                dirs.sysroot_mount_path(),
+                cmd
+            )
+        };
         self.args(["sh", "-c", &build_command])
     }
 

@@ -240,6 +240,14 @@ impl SafeCommand {
         }
         self
     }
+
+    pub fn program(&self) -> &str {
+        &self.program
+    }
+
+    pub fn arg_slice(&self) -> &[String] {
+        &self.args
+    }
 }
 
 impl fmt::Debug for SafeCommand {

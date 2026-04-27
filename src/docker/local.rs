@@ -76,17 +76,21 @@ pub(crate) fn run(
         .wrap_err("when copying seccomp profile")?;
     docker.add_user_id(engine.is_rootless);
 
-    docker
-        .args([
-            "-v",
-            &format!(
-                "{}:{}{selinux}",
-                toolchain_dirs.cargo_host_path()?,
-                toolchain_dirs.cargo_mount_path()
-            ),
-        ])
-        // Prevent `bin` from being mounted inside the Docker container.
-        .args(["-v", &format!("{}/bin", toolchain_dirs.cargo_mount_path())]);
+    docker.args([
+        "-v",
+        &format!(
+            "{}:{}{selinux}",
+            toolchain_dirs.cargo_host_path()?,
+            toolchain_dirs.cargo_mount_path()
+        ),
+    ]);
+
+    // By default cross hides host-installed Cargo binaries from the container.
+    // In native-trace mode we intentionally expose CARGO_HOME/bin so the
+    // container can execute cargo-native-trace and native-trace-wrapper.
+    if !native_trace_enabled() {
+        docker.args(["-v", &format!("{}/bin", toolchain_dirs.cargo_mount_path())]);
+    }
 
     let host_root = paths.mount_finder.find_mount_path(package_dirs.host_root());
     docker.args([

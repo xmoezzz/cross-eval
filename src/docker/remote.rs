@@ -742,8 +742,12 @@ pub(crate) fn run(
         .add_seccomp(engine.kind, target, &paths.metadata)
         .wrap_err("when copying seccomp profile")?;
 
-    // Prevent `bin` from being mounted inside the Docker container.
-    docker.args(["-v", &format!("{mount_prefix}/cargo/bin")]);
+    // By default cross hides host-installed Cargo binaries from the container.
+    // In native-trace mode we intentionally expose CARGO_HOME/bin so the
+    // container can execute cargo-native-trace and native-trace-wrapper.
+    if !native_trace_enabled() {
+        docker.args(["-v", &format!("{mount_prefix}/cargo/bin")]);
+    }
 
     // When running inside NixOS or using Nix packaging we need to add the Nix
     // Store to the running container so it can load the needed binaries.
