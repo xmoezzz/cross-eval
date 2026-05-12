@@ -27,6 +27,52 @@ fn mount(
     Ok(())
 }
 
+fn add_native_trace_ebpf_runtime_args(docker: &mut Command) -> Result<()> {
+    if !native_trace_enabled() {
+        return Ok(());
+    }
+
+    if !cfg!(target_os = "linux") {
+        return Ok(());
+    }
+
+    for required_path in ["/lib/modules", "/usr/src"] {
+        if !Path::new(required_path).exists() {
+            eyre::bail!(
+                "CROSS_NATIVE_TRACE=1 requires host path to exist: {}",
+                required_path
+            );
+        }
+    }
+
+    docker.args([
+        "--privileged",
+        "--pid=host",
+        "--ulimit",
+        "memlock=-1:-1",
+        "-v",
+        "/lib/modules:/lib/modules:ro",
+        "-v",
+        "/usr/src:/usr/src:ro",
+    ]);
+
+    for path in [
+        "/sys/fs/bpf",
+        "/sys/kernel/debug",
+        "/sys/kernel/tracing",
+    ] {
+        if Path::new(path).exists() {
+            docker.args(["-v", &format!("{path}:{path}:rw")]);
+        }
+    }
+
+    if Path::new("/sys/kernel/btf").exists() {
+        docker.args(["-v", "/sys/kernel/btf:/sys/kernel/btf:ro"]);
+    }
+
+    Ok(())
+}
+
 pub(crate) fn run(
     options: DockerOptions,
     paths: DockerPaths,
@@ -42,6 +88,7 @@ pub(crate) fn run(
 
     let mut docker = engine.subcommand("run");
     docker.add_userns();
+    add_native_trace_ebpf_runtime_args(&mut docker)?;
 
     // Podman on macOS doesn't support selinux labels, see issue #756
     #[cfg(target_os = "macos")]
