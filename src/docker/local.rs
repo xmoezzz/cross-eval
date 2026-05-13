@@ -36,11 +36,34 @@ fn add_native_trace_ebpf_runtime_args(docker: &mut Command) -> Result<()> {
         return Ok(());
     }
 
-    for required_path in ["/lib/modules", "/usr/src"] {
-        if !Path::new(required_path).exists() {
+    let kernel_release = std::process::Command::new("uname")
+        .arg("-r")
+        .output()
+        .wrap_err("failed to run uname -r for CROSS_NATIVE_TRACE=1")?;
+
+    if !kernel_release.status.success() {
+        eyre::bail!("failed to get host kernel release with uname -r");
+    }
+
+    let kernel_release = String::from_utf8_lossy(&kernel_release.stdout)
+        .trim()
+        .to_string();
+
+    if kernel_release.is_empty() {
+        eyre::bail!("empty host kernel release from uname -r");
+    }
+
+    let modules_root = Path::new("/lib/modules");
+    let usr_src = Path::new("/usr/src");
+    let kernel_build = Path::new("/lib/modules")
+        .join(&kernel_release)
+        .join("build");
+
+    for required_path in [modules_root, usr_src, kernel_build.as_path()] {
+        if !required_path.exists() {
             eyre::bail!(
                 "CROSS_NATIVE_TRACE=1 requires host path to exist: {}",
-                required_path
+                required_path.display()
             );
         }
     }
@@ -48,6 +71,8 @@ fn add_native_trace_ebpf_runtime_args(docker: &mut Command) -> Result<()> {
     docker.args([
         "--privileged",
         "--pid=host",
+        "--security-opt",
+        "seccomp=unconfined",
         "--ulimit",
         "memlock=-1:-1",
         "-v",
@@ -69,6 +94,11 @@ fn add_native_trace_ebpf_runtime_args(docker: &mut Command) -> Result<()> {
     if Path::new("/sys/kernel/btf").exists() {
         docker.args(["-v", "/sys/kernel/btf:/sys/kernel/btf:ro"]);
     }
+
+    eprintln!(
+        "[CROSS_NATIVE_TRACE] enabled: kernel={} mounted /lib/modules, /usr/src, bpf/tracing paths",
+        kernel_release
+    );
 
     Ok(())
 }
