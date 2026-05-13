@@ -27,6 +27,31 @@ fn mount(
     Ok(())
 }
 
+fn host_kernel_release() -> Result<String> {
+    let output = Command::new("uname")
+        .arg("-r")
+        .output()
+        .wrap_err("failed to run uname -r for CROSS_NATIVE_TRACE=1")?;
+
+    if !output.status.success() {
+        eyre::bail!(
+            "uname -r failed for CROSS_NATIVE_TRACE=1 with status: {}",
+            output.status
+        );
+    }
+
+    let release = String::from_utf8(output.stdout)
+        .wrap_err("uname -r output is not valid UTF-8")?
+        .trim()
+        .to_owned();
+
+    if release.is_empty() {
+        eyre::bail!("uname -r returned an empty kernel release");
+    }
+
+    Ok(release)
+}
+
 fn add_native_trace_ebpf_runtime_args(docker: &mut Command) -> Result<()> {
     if !native_trace_enabled() {
         return Ok(());
@@ -45,6 +70,29 @@ fn add_native_trace_ebpf_runtime_args(docker: &mut Command) -> Result<()> {
         }
     }
 
+    let kernel_release = host_kernel_release()?;
+    let kernel_build = format!("/lib/modules/{kernel_release}/build");
+    let kernel_build_path = Path::new(&kernel_build);
+
+    if !kernel_build_path.exists() {
+        eyre::bail!(
+            "CROSS_NATIVE_TRACE=1 requires host kernel build directory to exist: {}. Install matching kernel-devel/kernel-headers for the running kernel.",
+            kernel_build
+        );
+    }
+
+    let kernel_build_real = kernel_build_path
+        .canonicalize()
+        .wrap_err_with(|| format!("failed to resolve host kernel build directory: {kernel_build}"))?;
+
+    if !kernel_build_real.exists() {
+        eyre::bail!(
+            "CROSS_NATIVE_TRACE=1 resolved kernel build directory does not exist: {} -> {}",
+            kernel_build,
+            kernel_build_real.display()
+        );
+    }
+
     docker.args([
         "--privileged",
         "--pid=host",
@@ -57,6 +105,16 @@ fn add_native_trace_ebpf_runtime_args(docker: &mut Command) -> Result<()> {
         "-v",
         "/usr/src:/usr/src:ro",
     ]);
+
+    // Mount the resolved kernel build directory explicitly as well. This keeps
+    // BCC on the normal /lib/modules/<release>/build path and avoids falling
+    // back to kheaders extraction, which is unstable when many BCC instances
+    // start concurrently.
+    docker.arg("-v").arg(format!(
+        "{}:{}:ro",
+        kernel_build_real.to_utf8()?,
+        kernel_build_real.to_utf8()?
+    ));
 
     for path in [
         "/sys/fs/bpf",
@@ -73,7 +131,10 @@ fn add_native_trace_ebpf_runtime_args(docker: &mut Command) -> Result<()> {
     }
 
     eprintln!(
-        "[CROSS_NATIVE_TRACE] enabled: mounted /lib/modules, /usr/src, bpf/tracing paths"
+        "[CROSS_NATIVE_TRACE] enabled: kernel_release={} kernel_build={} kernel_build_real={} mounted /lib/modules, /usr/src, bpf/tracing paths",
+        kernel_release,
+        kernel_build,
+        kernel_build_real.display()
     );
 
     Ok(())
@@ -124,9 +185,12 @@ pub(crate) fn run(
     docker.args(["--name", &container_id]);
     docker.arg("--rm");
 
-    docker
-        .add_seccomp(engine.kind, &options.target, &paths.metadata)
-        .wrap_err("when copying seccomp profile")?;
+    if !native_trace_enabled() {
+        docker
+            .add_seccomp(engine.kind, &options.target, &paths.metadata)
+            .wrap_err("when copying seccomp profile")?;
+    }
+
     docker.add_user_id(engine.is_rootless);
 
     docker.args([
@@ -205,6 +269,7 @@ pub(crate) fn run(
     if msg_info.should_fail() {
         return Ok(None);
     }
+
     let status = docker
         .arg(&image_name)
         .add_build_command(toolchain_dirs, &cmd)
