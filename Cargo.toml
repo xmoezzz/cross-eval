@@ -4,7 +4,8 @@ description = "Zero setup cross compilation and cross testing"
 documentation = "https://github.com/cross-rs/cross"
 keywords = ["cross", "compilation", "testing", "tool"]
 license = "MIT OR Apache-2.0"
-name = "cross"
+name = "cross-ori"
+autobins = false
 repository = "https://github.com/cross-rs/cross"
 version = "0.2.5"
 edition = "2021"
@@ -18,6 +19,18 @@ include = [
   "assets/*",
 ]
 rust-version = "1.85.0"
+
+[lib]
+name = "cross"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cross-ori"
+path = "src/bin/cross.rs"
+
+[[bin]]
+name = "cross-util"
+path = "src/bin/cross-util.rs"
 
 [features]
 default = []
